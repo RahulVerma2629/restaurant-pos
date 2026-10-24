@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+  <title>Restaurant POS — Orders</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div class="app">
+    <header class="topbar">
+      <strong class="brand">🍽 POS · Orders</strong>
+      <nav id="nav"></nav>
+      <label class="role">Role
+        <select id="role" data-c="role">
+          <option>waiter</option><option>manager</option><option>cashier</option><option>kitchen</option>
+        </select>
+      </label>
+    </header>
+    <main id="main"></main>
+  </div>
+  <div id="modal"></div>
+  <div id="dialog"></div>
+  <div class="toasts" id="toasts"></div>
+  <script src="app.js"></script>
+</body>
+</html>
