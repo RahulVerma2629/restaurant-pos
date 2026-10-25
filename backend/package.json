@@ -1,31 +1,4 @@
 {
-  "name": "backend",
-  "version": "1.0.0",
-  "description": "",
-  "main": "index.js",
-  "scripts": {
-    "test": "vitest run",
-    "typecheck": "tsc --noEmit",
-    "dev": "tsx watch src/server.ts",
-    "db:migrate": "tsx src/database/migrate.ts"
-  },
-  "keywords": [],
-  "author": "",
-  "license": "ISC",
-  "dependencies": {
-    "dotenv": "^18.0.9",
-    "express": "^5.3.0",
-    "pg": "^8.23.1"
-  },
-  "devDependencies": {
-    "@types/express": "^5.0.6",
-    "@types/node": "^26.6.5",
-    "@types/pg": "^8.23.1",
-    "tsx": "^4.23.15",
-    "typescript": "^7.0.2",
-    "vitest": "^5.0.5"
-  },
-  "type": "module"
   "name": "pos-backend",
   "version": "0.1.0",
   "private": true,
@@ -36,7 +9,11 @@
     "start": "node src/server.js",
     "seed": "node prisma/seed.js",
     "db:triggers": "prisma db execute --file prisma/audit_triggers.sql --schema prisma/schema.prisma",
-    "smoke": "node ../tests/backend/security.smoke.mjs"
+    "db:migrate": "tsx src/database/migrate.ts",
+    "smoke": "node ../tests/backend/security.smoke.mjs",
+    "test": "vitest run",
+    "test:reliability": "node --test ../tests/backend/reliability.test.mjs",
+    "typecheck": "tsc --noEmit"
   },
   "prisma": { "seed": "node prisma/seed.js" },
   "dependencies": {
@@ -47,9 +24,16 @@
     "express": "^4.21.2",
     "express-rate-limit": "^7.5.0",
     "helmet": "^8.0.0",
+    "pg": "^8.13.0",
     "zod": "^3.23.8"
   },
   "devDependencies": {
-    "prisma": "^5.22.0"
+    "@types/express": "^4.17.21",
+    "@types/node": "^22.10.0",
+    "@types/pg": "^8.11.10",
+    "prisma": "^5.22.0",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2",
+    "vitest": "^2.1.8"
   }
 }
