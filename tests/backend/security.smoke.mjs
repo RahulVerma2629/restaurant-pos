@@ -47,6 +47,19 @@ const used = await call('POST', '/discounts/check', { token: cashier, body: { pe
 check('20% allowed with approval', used.status === 200 && used.data?.approvedBy);
 check('approval cannot be reused', (await call('POST', '/discounts/check', { token: cashier, body: { percent: 20, approvalId: req.data?.id } })).status === 403);
 
+console.log('Integration with Billing and Orders');
+const refundOver = await call('POST', '/refunds/check', { token: cashier, body: { amountPaise: 60000, billId: 'b1' } });
+check('refund of Rs 600 by cashier (limit Rs 500) needs approval', refundOver.status === 403 && refundOver.error?.code === 'APPROVAL_REQUIRED');
+check('refund of Rs 400 (sent as paise) is allowed', (await call('POST', '/refunds/check', { token: cashier, body: { amountPaise: 40000, billId: 'b1' } })).status === 200);
+const cancelReq = await call('POST', '/approvals', { token: cashier, body: { action: 'ORDER_CANCEL', entityId: 5, reason: 'Guest left after KOT' } });
+check('cashier can request an ORDER_CANCEL approval', cancelReq.status === 201);
+check('manager approves it', (await call('POST', `/approvals/${cancelReq.data?.id}/decide`, { token: manager, body: { approve: true } })).status === 200);
+check('approval for another order is refused', (await call('POST', `/approvals/${cancelReq.data?.id}/consume`, { token: cashier, body: { action: 'ORDER_CANCEL', entityId: 6 } })).status === 403);
+check('orders module can use the approval once', (await call('POST', `/approvals/${cancelReq.data?.id}/consume`, { token: cashier, body: { action: 'ORDER_CANCEL', entityId: 5 } })).status === 200);
+check('approval cannot be used twice', (await call('POST', `/approvals/${cancelReq.data?.id}/consume`, { token: cashier, body: { action: 'ORDER_CANCEL', entityId: 5 } })).status === 403);
+const ingest = await call('POST', '/audit-logs/ingest', { body: { action: 'ORDER_CREATED' } });
+check('audit ingest without the integration key is refused', ingest.status === 401 || ingest.status === 503);
+
 console.log('Lockout');
 for (let i = 0; i < 5; i++) await call('POST', '/auth/pin-login', { body: { username: 'kitchen', pin: '9999' } });
 check('locked after 5 failures (423)', (await call('POST', '/auth/pin-login', { body: { username: 'kitchen', pin: '1234' } })).status === 423);

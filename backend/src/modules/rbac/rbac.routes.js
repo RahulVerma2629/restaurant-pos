@@ -5,7 +5,7 @@ import { authenticate, guard } from '../../middleware/authenticate.js';
 import { asyncHandler } from '../../utils/asyncHandler.js';
 import { HttpError, bad, notFound, forbidden } from '../../utils/errors.js';
 import { audit } from '../audit/audit.service.js';
-import { rolePermissions, checkLimit, OVERRIDE_ACTIONS } from './rbac.service.js';
+import { rolePermissions, checkLimit, OVERRIDE_ACTIONS, NUMERIC_ACTIONS } from './rbac.service.js';
 import { PERMISSIONS as P } from '../../../../shared/constants/permissions.js';
 import { AUDIT_EVENTS as EV } from '../../../../shared/constants/audit-events.js';
 
@@ -65,14 +65,19 @@ router.put('/roles/:id/permissions', ...guard(P.ROLES_MANAGE), asyncHandler(asyn
 // ---------- Approvals (manager override) ----------
 router.post('/approvals', authenticate, asyncHandler(async (req, res) => {
   const b = z.object({
-    action: z.enum(['DISCOUNT', 'REFUND']), value: z.number().positive(),
+    action: z.enum(Object.keys(OVERRIDE_ACTIONS)),
+    value: z.number().positive().optional(),
+    amountPaise: z.number().positive().optional(),   // REFUND from Billing: converted to rupees below
     entityId: z.union([z.string(), z.number()]).optional(), reason: z.string().min(1),
   }).parse(req.body);
+  // Discounts are in percent, refunds in rupees (the unit of the role limit). Billing sends paise.
+  const value = b.value ?? (b.amountPaise !== undefined ? b.amountPaise / 100 : undefined);
+  if (NUMERIC_ACTIONS.has(b.action) && value === undefined) throw bad(`${b.action} needs a value`);
   if (!req.perms.has(OVERRIDE_ACTIONS[b.action])) throw forbidden(`Missing permission: ${OVERRIDE_ACTIONS[b.action]}`);
   const a = await prisma.approval.create({ data: { action: b.action, requestedBy: req.user.id,
-    payload: { value: b.value, entityId: b.entityId ?? null }, reason: b.reason } });
+    payload: { value: value ?? null, entityId: b.entityId ?? null }, reason: b.reason } });
   await audit(req, { action: EV.APPROVAL_REQUESTED, entityType: 'approval', entityId: a.id,
-    newValue: { action: b.action, value: b.value, entityId: b.entityId }, reason: b.reason });
+    newValue: { action: b.action, value, entityId: b.entityId }, reason: b.reason });
   res.status(201).json({ data: { id: a.id, status: a.status } });
 }));
 
@@ -90,7 +95,7 @@ router.post('/approvals/:id/decide', ...guard(P.APPROVALS_DECIDE), asyncHandler(
   if (a.status !== 'pending') throw new HttpError(409, 'ALREADY_DECIDED', `Approval is already ${a.status}`);
   if (a.requestedBy === req.user.id) throw forbidden('You cannot approve your own request', 'SELF_APPROVAL');
   if (req.access.scope !== 'all' && a.requester.branchId !== req.user.branchId) throw forbidden('Request belongs to another branch');
-  if (b.approve) { // the approver's own limit must cover the amount
+  if (b.approve && NUMERIC_ACTIONS.has(a.action)) { // the approver's own limit must cover the amount
     const own = req.perms.get(OVERRIDE_ACTIONS[a.action]);
     if (!own || (own.limit !== null && a.payload.value > own.limit))
       throw forbidden('Value exceeds your own approval limit; escalate to a higher role', 'ABOVE_APPROVER_LIMIT');
@@ -104,15 +109,34 @@ router.post('/approvals/:id/decide', ...guard(P.APPROVALS_DECIDE), asyncHandler(
   res.json({ data: { id: a.id, status: b.approve ? 'approved' : 'rejected' } });
 }));
 
+// ---------- Using an approval for a non-numeric action (Orders module calls this) ----------
+// The requester's own token is used. The approval must belong to them, be approved, match the action, and is used once.
+router.post('/approvals/:id/consume', authenticate, asyncHandler(async (req, res) => {
+  const b = z.object({ action: z.enum(Object.keys(OVERRIDE_ACTIONS)), entityId: z.union([z.string(), z.number()]).optional() }).parse(req.body);
+  const a = await prisma.approval.findUnique({ where: { id: Number(req.params.id) } });
+  if (!a || a.requestedBy !== req.user.id || a.action !== b.action || a.status !== 'approved')
+    throw new HttpError(403, 'APPROVAL_INVALID', 'Approval is missing, not approved, already used, or for a different action');
+  const boundTo = a.payload?.entityId;
+  if (boundTo !== null && boundTo !== undefined && b.entityId !== undefined && String(boundTo) !== String(b.entityId))
+    throw new HttpError(403, 'APPROVAL_INVALID', 'Approval was issued for a different record');
+  const used = await prisma.approval.updateMany({ where: { id: a.id, status: 'approved' }, data: { status: 'used' } });
+  if (used.count !== 1) throw new HttpError(403, 'APPROVAL_INVALID', 'Approval already used');
+  await audit(req, { action: EV.APPROVAL_USED, entityType: 'approval', entityId: a.id, approvedBy: a.decidedBy,
+    newValue: { action: a.action, entityId: b.entityId } });
+  res.json({ data: { approvedBy: a.decidedBy } });
+}));
+
 // ---------- Limit checks (Billing calls these before applying a discount or refund) ----------
 router.post('/discounts/check', authenticate, asyncHandler(async (req, res) => {
   res.json({ data: await checkLimit(req, { permission: P.DISCOUNTS_APPLY, action: 'DISCOUNT',
     value: req.body?.percent, entityType: 'order', entityId: req.body?.orderId }) });
 }));
 
+// Refund limits are stored in rupees. Billing works in paise, so it sends amountPaise (or amount in rupees).
 router.post('/refunds/check', authenticate, asyncHandler(async (req, res) => {
+  const rupees = req.body?.amountPaise !== undefined ? req.body.amountPaise / 100 : req.body?.amount;
   res.json({ data: await checkLimit(req, { permission: P.REFUNDS_PROCESS, action: 'REFUND',
-    value: req.body?.amount, entityType: 'bill', entityId: req.body?.billId }) });
+    value: rupees, entityType: 'bill', entityId: req.body?.billId }) });
 }));
 
 export default router;

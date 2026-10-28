@@ -128,7 +128,7 @@ def remove_item(db: Session, order_id: int, item_id: int, reason: str | None, ap
     else:
         if not reason or len(reason) < 3:
             raise AppError(422, "REASON_REQUIRED", "Reason is required to remove an item sent to kitchen")
-        approver = require_approval(user, approved_by)
+        approver = require_approval(user, approved_by, "ITEM_REMOVE", order.id)
         begin_modification(db, order, user.id, f"removed {oi.name_snapshot}")
         kot_service.create_cancel_kot(db, order, oi, reason)
         oi.status, oi.cancel_reason = "cancelled", f"{reason} (approved by {approver})"
@@ -168,7 +168,7 @@ def cancel(db: Session, order_id: int, reason: str, approved_by: str | None, use
     if order.status in ("created", "confirmed"):
         approver = None
     elif order.status in ("kot_sent", "preparing", "modified"):
-        approver = require_approval(user, approved_by)     # cancel after KOT -> manager approval
+        approver = require_approval(user, approved_by, "ORDER_CANCEL", order.id)     # cancel after KOT -> manager approval
     else:
         raise AppError(409, "CANNOT_CANCEL", f"Order in '{order.status}' state cannot be cancelled")
     kot_service.cancel_order_kots(db, order)
@@ -187,7 +187,7 @@ def reopen(db: Session, order_id: int, reason: str, approved_by: str | None, use
     check_version(order, if_match)
     if order.status != "billed":
         raise AppError(409, "CANNOT_REOPEN", "Only billed (unpaid) orders can be reopened; use refund for paid orders")
-    approver = require_approval(user, approved_by)
+    approver = require_approval(user, approved_by, "ORDER_REOPEN", order.id)
     set_status(db, order, "served", user.id, f"reopened: {reason} (approved by {approver})")
     db.commit()
     db.refresh(order)

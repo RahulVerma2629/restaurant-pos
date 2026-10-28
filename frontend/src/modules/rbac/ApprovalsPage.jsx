@@ -44,7 +44,7 @@ export default function ApprovalsPage() {
     { header: 'ID', key: 'id' },
     { header: 'Requested by', render: (a) => a.requester?.name },
     { header: 'Type', key: 'action' },
-    { header: 'Value', render: (a) => `${a.payload.value}${a.action === 'DISCOUNT' ? '%' : ''}` },
+    { header: 'For', render: (a) => (a.payload.value == null ? (a.payload.entityId ? `#${a.payload.entityId}` : '') : a.action === 'DISCOUNT' ? `${a.payload.value}%` : `Rs ${a.payload.value}`) },
     { header: 'Reason', key: 'reason' },
     { header: 'Status', render: (a) => <Badge value={a.status} /> },
     {

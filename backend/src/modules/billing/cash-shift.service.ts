@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 
 export interface CashMovement {
   id: string;
-  type: "CASH_IN" | "CASH_OUT";
+  type: "CASH_IN" | "CASH_OUT" | "CASH_SALE" | "CASH_REFUND";
   amountPaise: number;
   reason: string;
   recordedBy: string;
@@ -18,6 +18,11 @@ export interface CashShift {
   actualClosingCashPaise?: number;
   variancePaise?: number;
   status: "OPEN" | "CLOSED";
+  // A closed shift with a cash difference waits for a manager before it is final.
+  reviewStatus: "NOT_REQUIRED" | "PENDING_REVIEW" | "REVIEWED";
+  reviewedBy?: string;
+  reviewNote?: string;
+  reviewedAt?: string;
   openedAt: string;
   closedAt?: string;
   movements: CashMovement[];
@@ -49,6 +54,7 @@ export class CashShiftService {
       openingCashPaise: input.openingCashPaise,
       expectedCashPaise: input.openingCashPaise,
       status: "OPEN",
+      reviewStatus: "NOT_REQUIRED",
       openedAt: new Date().toISOString(),
       movements: [],
     };
@@ -128,11 +134,73 @@ export class CashShiftService {
     shift.variancePaise =
       actualClosingCashPaise - shift.expectedCashPaise;
     shift.status = "CLOSED";
+    shift.reviewStatus = shift.variancePaise === 0 ? "NOT_REQUIRED" : "PENDING_REVIEW";
     shift.closedAt = new Date().toISOString();
 
     this.activeShiftByBranch.delete(shift.branchId);
 
     return structuredClone(shift);
+  }
+
+  // Cash taken for a bill goes into the drawer of the branch's open shift.
+  recordCashSale(branchId: string, amountPaise: number, recordedBy: string, reason: string): CashShift {
+    const shift = this.requireActiveShift(branchId);
+    this.validateAmount(amountPaise, false);
+    shift.expectedCashPaise += amountPaise;
+    shift.movements.push(this.makeMovement("CASH_SALE", amountPaise, reason, recordedBy));
+    return structuredClone(shift);
+  }
+
+  // Cash given back for a refund leaves the drawer.
+  recordCashRefund(branchId: string, amountPaise: number, recordedBy: string, reason: string): CashShift {
+    const shift = this.requireActiveShift(branchId);
+    this.validateAmount(amountPaise, false);
+    if (amountPaise > shift.expectedCashPaise) {
+      throw new Error("Cash refund exceeds expected drawer cash");
+    }
+    shift.expectedCashPaise -= amountPaise;
+    shift.movements.push(this.makeMovement("CASH_REFUND", amountPaise, reason, recordedBy));
+    return structuredClone(shift);
+  }
+
+  // Manager sign-off for a shift that closed with a cash difference.
+  reviewShift(shiftId: string, reviewedBy: string, note: string): CashShift {
+    const shift = this.shifts.get(shiftId);
+    if (!shift) throw new Error("Shift not found");
+    if (shift.reviewStatus !== "PENDING_REVIEW") {
+      throw new Error("Shift does not need a review");
+    }
+    if (!reviewedBy.trim() || !note.trim()) {
+      throw new Error("Reviewer and note are required");
+    }
+    shift.reviewStatus = "REVIEWED";
+    shift.reviewedBy = reviewedBy;
+    shift.reviewNote = note.trim();
+    shift.reviewedAt = new Date().toISOString();
+    return structuredClone(shift);
+  }
+
+  private requireActiveShift(branchId: string): CashShift {
+    const id = this.activeShiftByBranch.get(branchId);
+    const shift = id ? this.shifts.get(id) : undefined;
+    if (!shift) throw new Error("No open shift for this branch");
+    return shift;
+  }
+
+  private makeMovement(
+    type: CashMovement["type"],
+    amountPaise: number,
+    reason: string,
+    recordedBy: string,
+  ): CashMovement {
+    return {
+      id: randomUUID(),
+      type,
+      amountPaise,
+      reason,
+      recordedBy,
+      createdAt: new Date().toISOString(),
+    };
   }
 
   private requireOpenShift(shiftId: string): CashShift {

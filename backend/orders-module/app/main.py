@@ -11,7 +11,8 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from . import models  # noqa: F401  (register tables)
-from .database import Base, engine, get_db
+from .database import Base, SessionLocal, engine, get_db
+from .deps import authorize
 from .errors import AppError, app_error_handler, validation_error_handler
 from .models import Event
 from .routers import deliveries, kot, menu, orders, tables
@@ -24,10 +25,14 @@ async def lifespan(_: FastAPI):
     if os.getenv("AUTO_SEED", "0") == "1":      # start scripts set this: first run gets sample tables + menu
         from scripts.seed import run as seed
         seed()
+    if os.getenv("AUDIT_FORWARD", "0") == "1":      # send order history to the security module's audit log
+        from .audit_forwarder import start_background
+        start_background(SessionLocal)
     yield
 
 
 app = FastAPI(title="Restaurant POS — Order & Front-of-House Module", version="1.0.0", lifespan=lifespan,
+              dependencies=[Depends(authorize)],      # real login + permission check when AUTH_MODE=security
               description="Intern 1 module: tables, menu, orders, lifecycle, KOT, kitchen, dine-in/takeaway/delivery.")
 app.add_exception_handler(AppError, app_error_handler)
 app.add_exception_handler(RequestValidationError, validation_error_handler)

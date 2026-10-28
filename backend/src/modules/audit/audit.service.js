@@ -7,7 +7,7 @@ export async function audit(req, e) {
   await prisma.auditLog.create({
     data: {
       userId: e.userId ?? req.user?.id ?? null,
-      role: req.user ? req.roles.join(',') : null,
+      role: e.role ?? (req.user ? req.roles.join(',') : null),
       branchId: e.branchId ?? req.user?.branchId ?? null,
       terminalId: req.terminalId ?? null,
       action: e.action,
