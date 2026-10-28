@@ -73,8 +73,19 @@ docs/                DESIGN.md (full design, rules, edge cases) · openapi.json 
 | Intern 4 RBAC / Audit | replace `app/deps.py` (`current_user`) with real login; read `/events` + `order_status_history` |
 | Intern 5 Architecture | implement `transport()` in `app/services/kot_service.py` for real printers/KDS; switch DB with `DATABASE_URL` (e.g. PostgreSQL) |
 
+## Running with the real login (security module)
+```bash
+export AUTH_MODE=security SECURITY_API_URL=http://localhost:3000/api/v1
+export AUDIT_FORWARD=1 INTEGRATION_API_KEY=<same key as backend/.env>
+python -m uvicorn app.main:app --port 8000
+```
+Every request then needs `Authorization: Bearer <token from POST /api/v1/auth/login>`; the user, role and branch come from the token
+(the X-User-* headers are ignored), writes need the permission listed in `app/deps.py` (RULES), and "manager approval"
+means a real approval from the security module (`POST /approvals` -> manager `decide` -> send the approval id as `approved_by`).
+The built-in web UI at `/` still uses the demo headers, so use it with the default `AUTH_MODE=header`.
+
 ## Assumptions & limits (be honest in your demo)
-* Login is a placeholder (role dropdown → `X-User-Role` header). Add real auth before using it outside a demo.
+* Default login is a placeholder (role dropdown → `X-User-Role` header). For anything real set `AUTH_MODE=security` (see above).
 * KOT printing is a stub that always succeeds (real printer driver = Intern 5).
 * SQLite + one write lock is perfect for one restaurant / one server. For many branches use PostgreSQL (`DATABASE_URL`) — code is unchanged.
 * Retry count (3), delay rule (prep time × 1.25) and merge rule (only before "ready") are assumptions to confirm with the team.

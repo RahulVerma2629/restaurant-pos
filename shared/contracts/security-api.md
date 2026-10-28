@@ -52,3 +52,16 @@ Success `{ "data": ... }`. Error `{ "error": { "code", "message", "details" } }`
 `VALIDATION_ERROR` 400 · `UNAUTHENTICATED`, `SESSION_INVALID`, `SESSION_EXPIRED`, `INVALID_CREDENTIALS` 401 ·
 `FORBIDDEN`, `APPROVAL_REQUIRED`, `APPROVAL_INVALID`, `PRIVILEGE_ESCALATION`, `SELF_APPROVAL`, `ACCOUNT_INACTIVE` 403 ·
 `NOT_FOUND` 404 · `USERNAME_TAKEN`, `LAST_ADMIN`, `ALREADY_DECIDED` 409 · `ACCOUNT_LOCKED` 423 · `RATE_LIMITED` 429 · `NOT_IMPLEMENTED` 501
+
+
+## Added during the integration review
+
+| Method | Path | Who calls it | Purpose |
+|---|---|---|---|
+| POST | `/approvals` | any user | `action` is `DISCOUNT`, `REFUND`, `ORDER_CANCEL`, `ITEM_REMOVE`, `ORDER_REOPEN` or `KOT_CANCEL`. `DISCOUNT`/`REFUND` need `value` (percent / rupees) or `amountPaise`. Others take an optional `entityId` (order id, KOT id). |
+| POST | `/approvals/:id/consume` | Orders module, with the requester's own token | Uses an approved request once. Body `{ action, entityId? }`. Returns `{ approvedBy }`. |
+| POST | `/refunds/check` | Billing | Body `{ amountPaise, billId, approvalId? }` (or `amount` in rupees). Role refund limits are stored in **rupees**. |
+| POST | `/audit-logs/ingest` | Orders module (service key) | Header `X-Integration-Key: <INTEGRATION_API_KEY>`. Body is an audit event (`action` must be an `AUDIT_EVENTS` name). 503 if no key is configured. |
+
+New permission codes: `kot.update`, `tables.manage`, `delivery.manage`, `shifts.manage`, `customers.manage`, `reservations.manage`.
+Existing databases get them (with the default grants) when you run `npm run seed` again; edits made in the app are kept.

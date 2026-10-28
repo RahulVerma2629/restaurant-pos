@@ -9,13 +9,15 @@ import type {
   RecordPaymentInput,
   Refund,
   RefundPaymentInput,
-} from "./bill.types.js";;
+} from "./bill.types.js";
 
 const PAYMENT_METHODS: PaymentMethod[] = [
   "CASH",
   "CARD",
   "UPI",
   "ONLINE",
+  "WALLET",
+  "BANK_TRANSFER",
   "OTHER",
 ];
 
@@ -112,6 +114,25 @@ export class BillingService {
       throw new Error("Payment exceeds the outstanding balance");
     }
 
+    // A split bill is paid split by split, so every split keeps its own balance.
+    const billSplits = [...this.splitsById.values()].filter((x) => x.billId === billId);
+    let split: BillSplit | undefined;
+
+    if (billSplits.length > 0) {
+      if (!input.splitId) {
+        throw new Error("This bill is split: say which split the payment is for");
+      }
+      split = this.splitsById.get(input.splitId);
+      if (!split || split.billId !== billId) {
+        throw new Error("Split not found");
+      }
+      if (input.amountPaise > split.amountPaise - split.amountPaidPaise) {
+        throw new Error("Payment exceeds the outstanding balance of this split");
+      }
+    } else if (input.splitId) {
+      throw new Error("This bill has no splits");
+    }
+
     const payment: Payment = {
       id: randomUUID(),
       billId,
@@ -121,7 +142,14 @@ export class BillingService {
       receivedBy: input.receivedBy,
       createdAt: new Date().toISOString(),
       status: "COMPLETED",
+      ...(split ? { splitId: split.id } : {}),
     };
+
+    if (split) {
+      split.amountPaidPaise += payment.amountPaise;
+      split.status =
+        split.amountPaidPaise === split.amountPaise ? "PAID" : "PARTIALLY_PAID";
+    }
 
     bill.amountPaidPaise += payment.amountPaise;
     bill.balanceDuePaise = bill.totalPaise - bill.amountPaidPaise;
@@ -134,6 +162,11 @@ export class BillingService {
       bill: structuredClone(bill),
       payment: structuredClone(payment),
     };
+  }
+
+  getPaymentById(paymentId: string): Payment | undefined {
+    const payment = this.paymentsById.get(paymentId);
+    return payment ? structuredClone(payment) : undefined;
   }
 
   getPaymentsForBill(billId: string): Payment[] {
@@ -185,6 +218,19 @@ export class BillingService {
 
     bill.amountPaidPaise -= input.amountPaise;
     bill.balanceDuePaise = bill.totalPaise - bill.amountPaidPaise;
+
+    if (payment.splitId) {
+      const split = this.splitsById.get(payment.splitId);
+      if (split) {
+        split.amountPaidPaise -= input.amountPaise;
+        split.status =
+          split.amountPaidPaise === 0
+            ? "UNPAID"
+            : split.amountPaidPaise === split.amountPaise
+              ? "PAID"
+              : "PARTIALLY_PAID";
+      }
+    }
 
     if (bill.status !== "VOID") {
       bill.status =
@@ -277,6 +323,24 @@ export class BillingService {
     }
 
     return structuredClone(splits);
+    }
+
+    splitBillEqually(billId: string, count: number): BillSplit[] {
+    const bill = this.requireBill(billId);
+
+    if (!Number.isSafeInteger(count) || count < 2 || count > 50) {
+        throw new Error("An equal split needs between 2 and 50 parts");
+    }
+
+    // Example: 1000 / 3 -> 334 + 333 + 333 (the extra paise go to the first guests, nothing is lost)
+    const base = Math.floor(bill.totalPaise / count);
+    const extra = bill.totalPaise % count;
+    const parts = Array.from({ length: count }, (_, index) => ({
+        label: `Guest ${index + 1}`,
+        amountPaise: base + (index < extra ? 1 : 0),
+    }));
+
+    return this.splitBillByAmounts(billId, parts);
     }
 
     getSplitsForBill(billId: string): BillSplit[] {

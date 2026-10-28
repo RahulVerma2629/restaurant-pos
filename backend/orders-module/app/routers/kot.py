@@ -67,7 +67,7 @@ def cancel(kot_id: int, body: KotCancelIn, db: Session = Depends(get_db), user: 
     if kot.status in ("ready", "served", "cancelled"):
         raise AppError(409, "CANNOT_CANCEL_KOT", f"KOT in '{kot.status}' state cannot be cancelled")
     if kot.status in ("accepted", "preparing"):
-        require_approval(user, body.approved_by)
+        require_approval(user, body.approved_by, "KOT_CANCEL", kot.id)
     kot.status = "cancelled"
     for ki in kot.items:
         ki.status = "cancelled"

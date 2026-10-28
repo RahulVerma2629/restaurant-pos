@@ -3,19 +3,25 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "engines": { "node": ">=20" },
+  "engines": {
+    "node": ">=20"
+  },
   "scripts": {
-    "dev": "node --watch src/server.js",
-    "start": "node src/server.js",
+    "dev": "tsx watch src/server.js",
+    "start": "tsx src/server.js",
     "seed": "node prisma/seed.js",
     "db:triggers": "prisma db execute --file prisma/audit_triggers.sql --schema prisma/schema.prisma",
     "db:migrate": "tsx src/database/migrate.ts",
     "smoke": "node ../tests/backend/security.smoke.mjs",
     "test": "vitest run",
     "test:reliability": "node --test ../tests/backend/reliability.test.mjs",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test:billing": "vitest run",
+    "test:all": "npm run test:reliability && npm run test:billing"
   },
-  "prisma": { "seed": "node prisma/seed.js" },
+  "prisma": {
+    "seed": "node prisma/seed.js"
+  },
   "dependencies": {
     "@prisma/client": "^5.22.0",
     "bcryptjs": "^2.4.3",

@@ -4,7 +4,17 @@ import { audit } from '../audit/audit.service.js';
 import { AUDIT_EVENTS as EV } from '../../../../shared/constants/audit-events.js';
 
 // Which permission governs each overridable action.
-export const OVERRIDE_ACTIONS = { DISCOUNT: 'discounts.apply', REFUND: 'refunds.process' };
+// DISCOUNT (value = percent) and REFUND (value = rupees) carry a number checked against the user's limit.
+// The others need no number: they are one-time manager permissions for the Orders module.
+export const OVERRIDE_ACTIONS = {
+  DISCOUNT: 'discounts.apply',
+  REFUND: 'refunds.process',
+  ORDER_CANCEL: 'orders.modify',     // cancel an order after the KOT was sent
+  ITEM_REMOVE: 'orders.modify',      // remove an item that was already sent to the kitchen
+  ORDER_REOPEN: 'orders.modify',     // reopen a billed order
+  KOT_CANCEL: 'kot.update',          // cancel a KOT that is already being prepared
+};
+export const NUMERIC_ACTIONS = new Set(['DISCOUNT', 'REFUND']);
 
 export async function rolePermissions(roleId) {
   const rows = await prisma.rolePermission.findMany({

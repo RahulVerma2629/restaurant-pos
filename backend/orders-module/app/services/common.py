@@ -2,7 +2,7 @@ import json
 
 from sqlalchemy.orm import Session
 
-from ..deps import User
+from ..deps import User, auth_mode, consume_approval
 from ..errors import AppError
 from ..models import Event
 from ..utils import now
@@ -14,9 +14,16 @@ def emit(db: Session, name: str, payload: dict) -> None:
     db.add(Event(name=name, payload=json.dumps(payload, default=str)))
 
 
-def require_approval(user: User, approved_by: str | None) -> str:
+def require_approval(user: User, approved_by: str | None, action: str | None = None, entity_id=None) -> str:
     """Manager approval. A manager acting directly counts as self-approved.
-    TODO(Intern 4): validate `approved_by` against real users/roles."""
+
+    Header mode (demo/tests): any text in `approved_by` is accepted, as before.
+    Security mode: a manager (permission approvals.decide) approves directly; anyone else must send the id of an
+    approval a manager granted in the security module, and it is used up here (one use only)."""
+    if auth_mode() == "security":
+        if user.can("approvals.decide"):
+            return user.id
+        return consume_approval(user, approved_by or "", action or "", entity_id)
     if user.role in MANAGER_ROLES:
         return user.id
     if approved_by and approved_by.strip():

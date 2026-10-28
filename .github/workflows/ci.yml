@@ -20,7 +20,23 @@ jobs:
       - run: npm ci --ignore-scripts
       - name: Reliability tests (no database needed)
         run: npm run test:reliability
-      - name: Billing unit tests
-        run: npm test
-        continue-on-error: true   # remove once billing tests pass in CI
+      - name: Billing tests (unit + integration with fakes, no database needed)
+        run: npm run test:billing
+      - name: Type check
+        run: npm run typecheck
 
+  orders:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend/orders-module
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: backend/orders-module/requirements-dev.txt
+      - run: pip install -r requirements-dev.txt
+      - name: Orders tests (includes the security bridge)
+        run: python -m pytest -q

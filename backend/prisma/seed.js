@@ -11,15 +11,29 @@ async function main() {
   let branch = await prisma.branch.findFirst();
   if (!branch) branch = await prisma.branch.create({ data: { name: 'Main Branch' } });
 
-  // Permissions
+  // Permissions (remember which ones are new, so existing databases get the default grants for them)
+  const newCodes = new Set();
   for (const p of PERMISSION_INFO) {
+    if (!(await prisma.permission.findUnique({ where: { code: p.code } }))) newCodes.add(p.code);
     await prisma.permission.upsert({ where: { code: p.code }, update: { module: p.module, description: p.description }, create: p });
   }
 
   // Roles and the default matrix (only filled the first time, so edits made in the app are kept)
   for (const name of Object.values(ROLES)) {
     const existing = await prisma.role.findUnique({ where: { name } });
-    if (existing) continue;
+    if (existing) {
+      // Role already there: only add default grants for permissions created in this run. Edits made in the app stay.
+      for (const [code, grant] of Object.entries(DEFAULT_RBAC_MATRIX[name])) {
+        if (!newCodes.has(code)) continue;
+        const perm = await prisma.permission.findUnique({ where: { code } });
+        await prisma.rolePermission.upsert({
+          where: { roleId_permissionId: { roleId: existing.id, permissionId: perm.id } },
+          update: {},
+          create: { roleId: existing.id, permissionId: perm.id, scope: grant.scope, limitValue: grant.limit },
+        });
+      }
+      continue;
+    }
     const role = await prisma.role.create({ data: { name, description: ROLE_DESCRIPTIONS[name], isSystem: true } });
     for (const [code, grant] of Object.entries(DEFAULT_RBAC_MATRIX[name])) {
       const perm = await prisma.permission.findUnique({ where: { code } });

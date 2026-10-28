@@ -13,6 +13,8 @@ export type PaymentMethod =
   | "CARD"
   | "UPI"
   | "ONLINE"
+  | "WALLET"
+  | "BANK_TRANSFER"
   | "OTHER";
 
 export interface BillItem {
@@ -62,6 +64,7 @@ export interface Payment {
   receivedBy: string;
   createdAt: string;
   status: "COMPLETED" | "PARTIALLY_REFUNDED" | "REFUNDED";
+  splitId?: string;
 }
 
 export interface Refund {
@@ -78,6 +81,7 @@ export interface RecordPaymentInput {
   amountPaise: number;
   method: PaymentMethod;
   receivedBy: string;
+  splitId?: string;
 }
 
 export interface RefundPaymentInput {

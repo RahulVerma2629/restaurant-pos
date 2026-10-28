@@ -1,79 +1,150 @@
 import { Router } from "express";
-import { CashShiftService } from "./cash-shift.service.js";
+import type { Request, RequestHandler, Response } from "express";
+import type { CashShiftService } from "./cash-shift.service.js";
+import { actorOf, httpError, scopeOf, sendError } from "./billing.http.js";
 
-const router = Router();
-const service = new CashShiftService();
-
-function handleError(error: unknown, res: import("express").Response) {
-  const message =
-    error instanceof Error ? error.message : "Request failed";
-
-  const status = message.includes("not found") ? 404 : 400;
-  res.status(status).json({ error: message });
+export interface ShiftDeps {
+  shifts: CashShiftService;
+  guard(permission: string): RequestHandler[];
+  idempotent(): RequestHandler;
+  audit(req: Request, event: Record<string, unknown>): Promise<void>;
 }
 
-router.post("/open", (req, res) => {
-  try {
-    res.status(201).json({ data: service.openShift(req.body) });
-  } catch (error) {
-    handleError(error, res);
-  }
-});
+function param(req: Request, name: string): string {
+  const value = req.params[name];
+  if (!value) throw httpError(400, "VALIDATION_ERROR", `${name} is required`);
+  return value;
+}
 
-router.get("/active/:branchId", (req, res) => {
-  const shift = service.getActiveShift(req.params.branchId);
+export function createCashShiftRouter(deps: ShiftDeps): Router {
+  const router = Router();
 
-  if (!shift) {
-    res.status(404).json({ error: "No active shift for this branch" });
-    return;
-  }
-
-  res.json({ data: shift });
-});
-
-router.get("/:id", (req, res) => {
-  try {
-    res.json({ data: service.getShift(req.params.id) });
-  } catch (error) {
-    handleError(error, res);
-  }
-});
-
-router.post("/:id/movements", (req, res) => {
-  try {
-    res.status(201).json({
-      data: service.recordMovement(req.params.id, req.body),
-    });
-  } catch (error) {
-    handleError(error, res);
-  }
-});
-
-router.post("/:id/close", (req, res) => {
-  try {
-    const body: unknown = req.body;
-
-    if (
-      typeof body !== "object" ||
-      body === null ||
-      !("actualClosingCashPaise" in body) ||
-      typeof body.actualClosingCashPaise !== "number"
-    ) {
-      res.status(400).json({
-        error: "actualClosingCashPaise is required",
-      });
-      return;
+  async function safeAudit(req: Request, event: Record<string, unknown>): Promise<void> {
+    try {
+      await deps.audit(req, event);
+    } catch (error) {
+      console.error("audit write failed", event.action, error);
     }
-
-    res.json({
-      data: service.closeShift(
-        req.params.id,
-        body.actualClosingCashPaise,
-      ),
-    });
-  } catch (error) {
-    handleError(error, res);
   }
-});
 
-export default router;
+  function assertBranch(req: Request, branchId: string): void {
+    if (scopeOf(req) !== "all" && actorOf(req).branchId !== branchId) {
+      throw httpError(403, "FORBIDDEN", "This shift belongs to another branch");
+    }
+  }
+
+  function requireShift(req: Request, shiftId: string) {
+    const shift = deps.shifts.getShift(shiftId);
+    assertBranch(req, shift.branchId);
+    return shift;
+  }
+
+  router.post("/open", ...deps.guard("shifts.manage"), deps.idempotent(), async (req: Request, res: Response) => {
+    try {
+      const actor = actorOf(req);
+      const body = (req.body ?? {}) as { branchId?: string; openingCashPaise?: number };
+      const branchId = scopeOf(req) === "all" ? String(body.branchId ?? actor.branchId) : actor.branchId;
+      const shift = deps.shifts.openShift({
+        branchId,
+        openedBy: actor.id,
+        openingCashPaise: body.openingCashPaise as number,
+      });
+      await safeAudit(req, {
+        action: "SHIFT_OPENED",
+        entityType: "shift",
+        entityId: shift.id,
+        newValue: { branchId, openingCashPaise: shift.openingCashPaise },
+      });
+      res.status(201).json({ data: shift });
+    } catch (error) {
+      sendError(res, error);
+    }
+  });
+
+  router.get("/active/:branchId", ...deps.guard("shifts.manage"), (req: Request, res: Response) => {
+    try {
+      const branchId = param(req, "branchId");
+      assertBranch(req, branchId);
+      const shift = deps.shifts.getActiveShift(branchId);
+      if (!shift) throw httpError(404, "NOT_FOUND", "No active shift for this branch");
+      res.json({ data: shift });
+    } catch (error) {
+      sendError(res, error);
+    }
+  });
+
+  router.get("/:id", ...deps.guard("shifts.manage"), (req: Request, res: Response) => {
+    try {
+      res.json({ data: requireShift(req, param(req, "id")) });
+    } catch (error) {
+      sendError(res, error);
+    }
+  });
+
+  router.post("/:id/movements", ...deps.guard("shifts.manage"), deps.idempotent(), async (req: Request, res: Response) => {
+    try {
+      const actor = actorOf(req);
+      const shift = requireShift(req, param(req, "id"));
+      const body = (req.body ?? {}) as { type?: "CASH_IN" | "CASH_OUT"; amountPaise?: number; reason?: string };
+      const updated = deps.shifts.recordMovement(shift.id, {
+        type: body.type as "CASH_IN" | "CASH_OUT",
+        amountPaise: body.amountPaise as number,
+        reason: body.reason as string,
+        recordedBy: actor.id,
+      });
+      await safeAudit(req, {
+        action: "CASH_MOVEMENT",
+        entityType: "shift",
+        entityId: shift.id,
+        newValue: { type: body.type, amountPaise: body.amountPaise },
+        reason: body.reason,
+      });
+      res.status(201).json({ data: updated });
+    } catch (error) {
+      sendError(res, error);
+    }
+  });
+
+  router.post("/:id/close", ...deps.guard("shifts.manage"), deps.idempotent(), async (req: Request, res: Response) => {
+    try {
+      const shift = requireShift(req, param(req, "id"));
+      const actual: unknown = req.body?.actualClosingCashPaise;
+      if (typeof actual !== "number") {
+        throw httpError(400, "VALIDATION_ERROR", "actualClosingCashPaise is required");
+      }
+      const closed = deps.shifts.closeShift(shift.id, actual);
+      await safeAudit(req, {
+        action: "SHIFT_CLOSED",
+        entityType: "shift",
+        entityId: shift.id,
+        oldValue: { expectedCashPaise: closed.expectedCashPaise },
+        newValue: { actualClosingCashPaise: actual, variancePaise: closed.variancePaise, reviewStatus: closed.reviewStatus },
+      });
+      res.json({ data: { ...closed, reviewRequired: closed.reviewStatus === "PENDING_REVIEW" } });
+    } catch (error) {
+      sendError(res, error);
+    }
+  });
+
+  // A manager signs off a shift that closed with a cash difference.
+  router.post("/:id/review", ...deps.guard("approvals.decide"), async (req: Request, res: Response) => {
+    try {
+      const actor = actorOf(req);
+      const shift = requireShift(req, param(req, "id"));
+      const note = typeof req.body?.note === "string" ? req.body.note : "";
+      const reviewed = deps.shifts.reviewShift(shift.id, actor.id, note);
+      await safeAudit(req, {
+        action: "SHIFT_REVIEWED",
+        entityType: "shift",
+        entityId: shift.id,
+        newValue: { variancePaise: reviewed.variancePaise },
+        reason: note,
+      });
+      res.json({ data: reviewed });
+    } catch (error) {
+      sendError(res, error);
+    }
+  });
+
+  return router;
+}
